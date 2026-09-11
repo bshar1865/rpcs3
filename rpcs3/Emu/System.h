@@ -173,6 +173,19 @@ class Emulator final
 	bool m_force_boot = false;
 
 	bool m_continuous_mode = false;
+
+	// VSH is currently executed as a normal guest executable, rather than as a
+	// resident LV2 process. Keep the boot information outside guest state so an
+	// application launched by VSH can return to a freshly booted VSH after its
+	// guest process has been completely torn down.
+	struct vsh_session_t
+	{
+		std::string path;
+		std::string config_path;
+		std::optional<std::string> db_config;
+	};
+
+	std::optional<vsh_session_t> m_vsh_session;
 	bool m_has_gui = true;
 	bool m_headless = false;
 	bool m_add_database_config = false;
@@ -440,6 +453,8 @@ public:
 
 	void SetForceBoot(bool force_boot);
 	void SetContinuousMode(bool continuous_mode);
+	bool CanReturnToVsh() const;
+	void ReturnToVsh();
 
 	game_boot_result Load(const std::string& title_id = "", bool is_disc_patch = false, usz recursion_count = 0);
 	void Run(bool start_playtime);

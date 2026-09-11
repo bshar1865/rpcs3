@@ -353,8 +353,16 @@ void _sys_process_exit(ppu_thread& ppu, s32 status, u32 arg2, u32 arg3)
 	Emu.CallFromMainThread([]()
 	{
 		sys_process.success("Process finished");
-		signal_system_cache_can_stay();
-		Emu.Kill();
+
+		if (Emu.CanReturnToVsh())
+		{
+			Emu.ReturnToVsh();
+		}
+		else
+		{
+			signal_system_cache_can_stay();
+			Emu.Kill();
+		}
 	});
 
 	// Wait for GUI thread
@@ -420,6 +428,7 @@ void lv2_exitspawn(ppu_thread& ppu, std::vector<std::string>& argv, std::vector<
 	Emu.CallFromMainThread([is_real_reboot, argv = std::move(argv), envp = std::move(envp), data = std::move(data)]() mutable
 	{
 		sys_process.success("Process finished -> %s", argv[0]);
+		sys_process.notice("Exitspawn transition: source_is_vsh=%d, target_vpath='%s'", Emu.IsVsh(), argv[0]);
 
 		std::string disc;
 
@@ -430,6 +439,7 @@ void lv2_exitspawn(ppu_thread& ppu, std::vector<std::string>& argv, std::vector<
 
 		std::string path = vfs::get(argv[0]);
 		std::string hdd1 = vfs::get("/dev_hdd1/");
+		sys_process.notice("Exitspawn target resolved to host path '%s'", path);
 
 		const u128 klic = g_fxo->get<loaded_npdrm_keys>().last_key();
 

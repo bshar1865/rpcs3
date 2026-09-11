@@ -1063,6 +1063,29 @@ game_boot_result Emulator::BootGame(const std::string& path, const std::string& 
 		return game_boot_result::currently_restricted;
 	}
 
+	// VSH launches titles through exitspawn. The following title is configured
+	// in continuous mode, so retain the original VSH boot descriptor here rather
+	// than in any guest/LV2 object that exitspawn will destroy.
+	const bool is_vsh_boot = path.ends_with("vsh/module/vsh.self"sv);
+	const auto update_vsh_session = [this, &path, &config_path, &db_config, is_vsh_boot, config_mode](game_boot_result result)
+	{
+		// Do not replace a usable session if this boot attempt failed.
+		if (result == game_boot_result::no_errors)
+		{
+			if (is_vsh_boot)
+			{
+				m_vsh_session = vsh_session_t{path, config_path, db_config};
+			}
+			else if (config_mode != cfg_mode::continuous)
+			{
+				// A direct frontend boot supersedes a previously stopped VSH session.
+				m_vsh_session.reset();
+			}
+		}
+
+		return result;
+	};
+
 	auto save_args = std::make_tuple(m_path, m_path_original, argv, envp, data, disc, klic, hdd1, m_config_mode, m_config_path, m_db_config);
 
 	auto restore_on_no_boot = [&](game_boot_result result)
@@ -1117,7 +1140,7 @@ game_boot_result Emulator::BootGame(const std::string& path, const std::string& 
 			m_path_original = m_path;
 		}
 
-		return restore_on_no_boot(Load(title_id));
+		return update_vsh_session(restore_on_no_boot(Load(title_id)));
 	}
 
 	game_boot_result result = game_boot_result::nothing_to_boot;
@@ -1136,7 +1159,7 @@ game_boot_result Emulator::BootGame(const std::string& path, const std::string& 
 		result = Load(title_id);
 	}
 
-	return restore_on_no_boot(result);
+	return update_vsh_session(restore_on_no_boot(result));
 }
 
 void Emulator::SetForceBoot(bool force_boot)
@@ -1152,6 +1175,36 @@ void Emulator::SetContinuousMode(bool continuous_mode)
 	{
 		render->set_continuous_mode(continuous_mode);
 	}
+}
+
+bool Emulator::CanReturnToVsh() const
+{
+	return m_vsh_session.has_value() && !IsVsh();
+}
+
+void Emulator::ReturnToVsh()
+{
+	ensure(CanReturnToVsh());
+
+	const vsh_session_t session = *m_vsh_session;
+
+	after_kill_callback = [this, session]()
+	{
+		// This is deliberately a new VSH boot. Emulator::Kill has already
+		// destroyed every guest thread, LV2 object, RSX context and guest VM.
+		SetForceBoot(true);
+
+		if (const auto res = BootGame(session.path, "", true, cfg_mode::custom, session.config_path, session.db_config);
+			res != game_boot_result::no_errors)
+		{
+			sys_log.fatal("Failed to return to VSH after guest process exit! (path=\"%s\", error=%s)", session.path, res);
+		}
+	};
+
+	sys_log.success("Process finished -> returning to VSH (%s)", session.path);
+	signal_system_cache_can_stay();
+	SetContinuousMode(true);
+	Kill(false);
 }
 
 game_boot_result Emulator::Load(const std::string& title_id, bool is_disc_patch, usz recursion_count)

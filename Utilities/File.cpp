@@ -1585,6 +1585,35 @@ bool fs::create_symlink(const std::string& path, const std::string& target)
 #endif
 }
 
+bool fs::create_hard_link(const std::string& path, const std::string& target)
+{
+	const auto source_device = get_virtual_device(target);
+
+	if (source_device != get_virtual_device(path) || source_device)
+	{
+		// Hard links cannot span filesystems, and virtual devices do not expose
+		// inode/link semantics through device_base.
+		g_tls_error = fs::error::xdev;
+		return false;
+	}
+
+#ifdef _WIN32
+	if (!CreateHardLinkW(to_wchar(path).get(), to_wchar(target).get(), nullptr))
+	{
+		g_tls_error = to_error(GetLastError());
+		return false;
+	}
+#else
+	if (::link(target.c_str(), path.c_str()) != 0)
+	{
+		g_tls_error = to_error(errno);
+		return false;
+	}
+#endif
+
+	return true;
+}
+
 bool fs::rename(const std::string& from, const std::string& to, bool overwrite)
 {
 	if (from.empty() || to.empty())

@@ -469,6 +469,7 @@ lv2_fs_mount_point* lv2_fs_object::get_mp(std::string_view filename, std::string
 			const bool device_alias_check = !is_path && (
 				(mp == &g_mp_sys_dev_hdd0 && mp_name == "CELL_FS_IOS:PATA0_HDD_DRIVE"sv) ||
 				(mp == &g_mp_sys_dev_hdd1 && mp_name == "CELL_FS_IOS:PATA1_HDD_DRIVE"sv) ||
+				(mp == &g_mp_sys_dev_bdvd && mp_name == "CELL_FS_IOS:BDVD_DRIVE"sv) ||
 				(mp == &g_mp_sys_dev_flash && mp_name == "CELL_FS_IOS:BUILTIN_FLASH"sv) ||
 				(mp == &g_mp_sys_dev_flash && mp_name == "CELL_FS_IOS:BUILTIN_FLSH1"sv) ||
 				(mp == &g_mp_sys_dev_flash2 && mp_name == "CELL_FS_IOS:BUILTIN_FLSH2"sv) ||
@@ -1863,10 +1864,78 @@ error_code sys_fs_fstat(ppu_thread& ppu, u32 fd, vm::ptr<CellFsStat> sb)
 	return CELL_OK;
 }
 
-error_code sys_fs_link(ppu_thread&, vm::cptr<char> from, vm::cptr<char> to)
+error_code sys_fs_link(ppu_thread& ppu, vm::cptr<char> from, vm::cptr<char> to)
 {
-	sys_fs.todo("sys_fs_link(from=%s, to=%s)", from, to);
+	lv2_obj::sleep(ppu);
 
+	sys_fs.warning("sys_fs_link(from=%s, to=%s)", from, to);
+
+	const auto [from_error, vfrom] = translate_to_str(from);
+
+	if (from_error)
+	{
+		return {from_error, vfrom};
+	}
+
+	const auto [to_error, vto] = translate_to_str(to);
+
+	if (to_error)
+	{
+		return {to_error, vto};
+	}
+
+	const std::string local_from = vfs::get(vfrom);
+	const std::string local_to = vfs::get(vto);
+	const auto& mp = g_fxo->get<lv2_fs_mount_info_map>().lookup(vfrom);
+	const auto& mp_to = g_fxo->get<lv2_fs_mount_info_map>().lookup(vto);
+
+	if (mp == &g_mp_sys_dev_root || mp_to == &g_mp_sys_dev_root)
+	{
+		return CELL_EPERM;
+	}
+
+	if (local_from.empty() || local_to.empty())
+	{
+		return CELL_ENOTMOUNTED;
+	}
+
+	if (mp != mp_to)
+	{
+		return CELL_EXDEV;
+	}
+
+	if (mp.read_only)
+	{
+		return CELL_EROFS;
+	}
+
+	if (!has_fs_write_rights(vto))
+	{
+		return CELL_EACCES;
+	}
+
+	if (fs::is_dir(local_from))
+	{
+		return CELL_EPERM;
+	}
+
+	std::lock_guard lock(mp->mutex);
+
+	if (!fs::create_hard_link(local_to, local_from))
+	{
+		switch (fs::g_tls_error)
+		{
+		case fs::error::noent: return {CELL_ENOENT, from};
+		case fs::error::exist: return {CELL_EEXIST, to};
+		case fs::error::acces: return {CELL_EACCES, to};
+		case fs::error::readonly: return {CELL_EROFS, to};
+		case fs::error::xdev: return CELL_EXDEV;
+		case fs::error::notdir: return {CELL_ENOTDIR, from};
+		default: return {CELL_EIO, from};
+		}
+	}
+
+	sys_fs.notice("sys_fs_link(): %s linked to %s", to, from);
 	return CELL_OK;
 }
 

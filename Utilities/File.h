@@ -248,6 +248,9 @@ namespace fs
 	// Create symbolic link
 	bool create_symlink(const std::string& path, const std::string& target);
 
+	// Create a hard link to an existing regular file.
+	bool create_hard_link(const std::string& path, const std::string& target);
+
 	// Rename (move) file or directory
 	bool rename(const std::string& from, const std::string& to, bool overwrite);
 
